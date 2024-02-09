@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Document</title>
+
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        width: 100vw;
+        height: 100vh;
+
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      canvas {
+        width: 600px;
+        height: 400px;
+
+        border: 1px solid black;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="crash-canvas" width="600" height="400"></canvas>
+  </body>
+
+  <script>
+    let i = 0;
+    let tickCounter = 0;
+    let limitTick = 15;
+
+    let lastI = 0;
+
+    function animationLoop() {
+      requestAnimationFrame(animationLoop);
+
+      tickCounter++;
+      if (tickCounter >= limitTick) {
+        tickCounter = 0;
+        i = Number((i + 0.01).toFixed(2));
+      }
+
+      if ((i * 100) % 20 == 0 && lastI != i) {
+        lastI = i;
+        console.log(limitTick);
+        if (limitTick > 5) {
+          limitTick -= 1;
+        }
+      }
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "rgba(0, 0, 0, 1)";
+      ctx.font = "30px Arial";
+      ctx.fillText((1 + i).toFixed(2), 300, 200);
+    }
+
+    var canvas = document.getElementById("crash-canvas");
+    var ctx = canvas.getContext("2d");
+
+    animationLoop();
+  </script>
+</html>
