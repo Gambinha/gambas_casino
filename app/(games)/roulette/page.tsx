@@ -4,8 +4,11 @@ import { use, useCallback, useEffect, useState } from "react";
 import RouletteWheel from "./components/roulette-wheel";
 import { RouletteNumbers } from "./auxiliares/roulette-numbers";
 import { RouletteBetOptions } from "./auxiliares/routellet-bets-options";
+import { useSocket } from "@/app/contexts/socket-context";
 
 export default function Page() {
+  const { socket } = useSocket();
+
   const DEFAULT_SPIN_ANGLE = 360 * 10; // Valor inicial do angulo de rotação da roleta (10 giros)
   const ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE = 360 / RouletteNumbers.length; // Angulo de cada número da roleta
 
@@ -26,13 +29,28 @@ export default function Page() {
   );
 
   const [betAmount, setBetAmount] = useState("0");
-  const [betOptions, setBetOptions] = useState<RouletteBetOptions>(
-    RouletteBetOptions.BLACK
+  const [betOption, setBetOption] = useState<RouletteBetOptions>(
+    RouletteBetOptions.GREEN
   );
 
   useEffect(() => {
+    if (socket) {
+      socket.emit("game:roulette", "Vamos jogar cassino");
+
+      socket.on(
+        "spin-roulette",
+        ({ sortedNumber }: { sortedNumber: RouletteNumbers }) => {
+          console.log("sortedNumber: " + sortedNumber);
+
+          setSortedNumber(sortedNumber);
+        }
+      );
+    }
+  }, [socket]);
+
+  useEffect(() => {
     spinRoulette();
-  }, []);
+  }, [sortedNumber]);
 
   const spinRoulette = () => {
     let currentNumberIndex = 0;
@@ -77,8 +95,49 @@ export default function Page() {
     setSpinDegrees((prev) => prev + rouletteNumbersAngleDistance);
   };
 
-  const onBetRoulette = () => {
-    console.log(betAmount, betOptions);
+  const verifyBetResults = () => {
+    // Código deve estar no backend
+    // Salvar cada aposta em uma lista de apostas (GREEN, RED, BLACK, ODD, EVEN) e verificar se a aposta foi ganha ou perdida
+    // E então atualizar o saldo do usuário
+
+    const sortedNumberValue = sortedNumber.value;
+
+    const isOdd = parseInt(sortedNumberValue) % 2 !== 0;
+    const isEven = !isOdd;
+    const isRed = sortedNumber.color === "#a31f1f";
+    const isBlack = sortedNumber.color === "#171212";
+    const isGreen = !isRed && !isBlack;
+
+    let isBetWon = false;
+
+    switch (betOption) {
+      case RouletteBetOptions.RED:
+        isBetWon = isRed;
+        break;
+      case RouletteBetOptions.BLACK:
+        isBetWon = isBlack;
+        break;
+      case RouletteBetOptions.GREEN:
+        isBetWon = isGreen;
+        break;
+      case RouletteBetOptions.ODD:
+        isBetWon = isOdd;
+        break;
+      case RouletteBetOptions.EVEN:
+        isBetWon = isEven;
+        break;
+    }
+
+    if (isBetWon) {
+      console.log("Ganhou");
+    } else {
+      console.log("Perdeu");
+    }
+  };
+
+  const onSpinRouletteComplete = () => {
+    setIsSpinning(false);
+    verifyBetResults();
   };
 
   return (
@@ -124,9 +183,9 @@ export default function Page() {
               className="flex-1 h-full bg-[#a31f1f] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
-                  betOptions === RouletteBetOptions.RED ? "white" : "#a31f1f",
+                  betOption === RouletteBetOptions.RED ? "white" : "#a31f1f",
               }}
-              onClick={() => setBetOptions(RouletteBetOptions.RED)}
+              onClick={() => setBetOption(RouletteBetOptions.RED)}
             >
               2x
             </div>
@@ -135,9 +194,9 @@ export default function Page() {
               className="flex-1 h-full bg-[#355e3b] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
-                  betOptions === RouletteBetOptions.GREEN ? "white" : "#355e3b",
+                  betOption === RouletteBetOptions.GREEN ? "white" : "#355e3b",
               }}
-              onClick={() => setBetOptions(RouletteBetOptions.GREEN)}
+              onClick={() => setBetOption(RouletteBetOptions.GREEN)}
             >
               14x
             </div>
@@ -146,9 +205,9 @@ export default function Page() {
               className="flex-1 h-full bg-[#171212] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
-                  betOptions === RouletteBetOptions.BLACK ? "white" : "#171212",
+                  betOption === RouletteBetOptions.BLACK ? "white" : "#171212",
               }}
-              onClick={() => setBetOptions(RouletteBetOptions.BLACK)}
+              onClick={() => setBetOption(RouletteBetOptions.BLACK)}
             >
               2x
             </div>
@@ -163,9 +222,9 @@ export default function Page() {
               className="flex-1 h-full bg-[#a31f1f] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
-                  betOptions === RouletteBetOptions.ODD ? "white" : "#a31f1f",
+                  betOption === RouletteBetOptions.ODD ? "white" : "#a31f1f",
               }}
-              onClick={() => setBetOptions(RouletteBetOptions.ODD)}
+              onClick={() => setBetOption(RouletteBetOptions.ODD)}
             >
               PAR
             </div>
@@ -174,16 +233,16 @@ export default function Page() {
               className="flex-1 h-full bg-[#171212] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
-                  betOptions === RouletteBetOptions.EVEN ? "white" : "#171212",
+                  betOption === RouletteBetOptions.EVEN ? "white" : "#171212",
               }}
-              onClick={() => setBetOptions(RouletteBetOptions.EVEN)}
+              onClick={() => setBetOption(RouletteBetOptions.EVEN)}
             >
               ÍMPAR
             </div>
           </div>
 
           <button
-            onClick={onBetRoulette}
+            onClick={spinRoulette}
             className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
           >
             Apostar
@@ -194,11 +253,11 @@ export default function Page() {
           id="roulette-numbers-historic"
           className="w-full h-20 max-h-20 min-h-20 "
         >
-          <h3 className=" text-sm">Últimos númeos</h3>
+          <h3 className=" text-sm">Últimos números</h3>
 
           <div
             id="numbers-historic-container"
-            className="mt-4 w-full h-8 flex flex-row items-center gap-2 bg-red-300"
+            className="mt-4 w-full h-8 flex flex-row items-center gap-2 overflow-x-auto overflow-y-hidden"
           >
             {lastSortedNumbers.map((number, index) => (
               <div
@@ -217,9 +276,7 @@ export default function Page() {
         className="flex-auto border-l-2 border-[#626B78] flex flex-co h-full items-center justify-center"
       >
         <RouletteWheel
-          onAnimationComplete={() => {
-            setIsSpinning(false);
-          }}
+          onAnimationComplete={onSpinRouletteComplete}
           spinDegrees={spinDegrees}
         ></RouletteWheel>
       </div>
