@@ -12,6 +12,15 @@ export default function Page() {
   const DEFAULT_SPIN_ANGLE = 360 * 10; // Valor inicial do angulo de rotação da roleta (10 giros)
   const ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE = 360 / RouletteNumbers.length; // Angulo de cada número da roleta
 
+  const GAME_ROULETTE_START_EVENT = "game:roulette:start";
+  const GAME_ROULETTE_LEAVE_EVENT = "game:roulette:leave";
+  const GAME_ROULETTE_BET_EVENT = "game:roulette:bet";
+  const GAME_ROULETTE_SPIN_END_EVENT = "game:roulette:spin-end";
+  const GAME_ROULETTE_TIME_FOR_BETS_EVENT = "game:roulette:time-for-bets";
+  const GAME_ROULETTE_SPIN_EVENT = "game:roulette:spin";
+  const GAME_ROULETTE_WAITING_FOR_BETS_EVENT = "game:roulette:waiting-for-bets";
+  const GAME_ROULETTE_WINNER_EVENT = "game:roulette:winner";
+
   const [isSpinning, setIsSpinning] = useState(false);
   const [spinDegrees, setSpinDegrees] = useState(0);
 
@@ -35,20 +44,31 @@ export default function Page() {
 
   useEffect(() => {
     if (socket) {
-      socket.emit("game:roulette", "Vamos jogar cassino");
+      socket.emit(GAME_ROULETTE_START_EVENT);
 
       socket.on(
-        "spin-roulette",
+        GAME_ROULETTE_SPIN_EVENT,
         ({ sortedNumber }: { sortedNumber: RouletteNumbers }) => {
           console.log("sortedNumber: " + sortedNumber);
 
           setSortedNumber(sortedNumber);
         }
       );
+
+      // Verificar eventos time_for_bets e waiting_for_bets
+      socket.on(GAME_ROULETTE_TIME_FOR_BETS_EVENT, () => {
+        console.log("Waiting for bets");
+      });
+
+      socket.on(GAME_ROULETTE_WINNER_EVENT, ({ amount }) => {
+        console.log("You win", amount);
+      });
     }
   }, [socket]);
 
   useEffect(() => {
+    if (sortedNumber.value === "00") return;
+
     spinRoulette();
   }, [sortedNumber]);
 
@@ -95,49 +115,23 @@ export default function Page() {
     setSpinDegrees((prev) => prev + rouletteNumbersAngleDistance);
   };
 
-  const verifyBetResults = () => {
-    // Código deve estar no backend
-    // Salvar cada aposta em uma lista de apostas (GREEN, RED, BLACK, ODD, EVEN) e verificar se a aposta foi ganha ou perdida
-    // E então atualizar o saldo do usuário
-
-    const sortedNumberValue = sortedNumber.value;
-
-    const isOdd = parseInt(sortedNumberValue) % 2 !== 0;
-    const isEven = !isOdd;
-    const isRed = sortedNumber.color === "#a31f1f";
-    const isBlack = sortedNumber.color === "#171212";
-    const isGreen = !isRed && !isBlack;
-
-    let isBetWon = false;
-
-    switch (betOption) {
-      case RouletteBetOptions.RED:
-        isBetWon = isRed;
-        break;
-      case RouletteBetOptions.BLACK:
-        isBetWon = isBlack;
-        break;
-      case RouletteBetOptions.GREEN:
-        isBetWon = isGreen;
-        break;
-      case RouletteBetOptions.ODD:
-        isBetWon = isOdd;
-        break;
-      case RouletteBetOptions.EVEN:
-        isBetWon = isEven;
-        break;
+  const bet = () => {
+    if (betAmount === "0") {
+      return;
     }
 
-    if (isBetWon) {
-      console.log("Ganhou");
-    } else {
-      console.log("Perdeu");
-    }
+    // Verificar se o usuário tem saldo suficiente
+
+    socket?.emit(GAME_ROULETTE_BET_EVENT, {
+      amount: Number(betAmount), // Verificar essa conversão
+      betOption,
+    });
   };
 
   const onSpinRouletteComplete = () => {
     setIsSpinning(false);
-    verifyBetResults();
+
+    socket?.emit(GAME_ROULETTE_SPIN_END_EVENT);
   };
 
   return (
@@ -242,7 +236,7 @@ export default function Page() {
           </div>
 
           <button
-            onClick={spinRoulette}
+            onClick={bet}
             className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
           >
             Apostar
