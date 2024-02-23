@@ -1,10 +1,10 @@
 "use client";
-
-import { use, useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import RouletteWheel from "./components/roulette-wheel";
 import { RouletteNumbers } from "./auxiliares/roulette-numbers";
 import { RouletteBetOptions } from "./auxiliares/routellet-bets-options";
 import { useSocket } from "@/app/contexts/socket-context";
+import { RouletteState } from "./auxiliares/roulette-state";
 
 export default function Page() {
   const { socket } = useSocket();
@@ -15,32 +15,48 @@ export default function Page() {
   const GAME_ROULETTE_START_EVENT = "game:roulette:start";
   const GAME_ROULETTE_LEAVE_EVENT = "game:roulette:leave";
   const GAME_ROULETTE_BET_EVENT = "game:roulette:bet";
-  const GAME_ROULETTE_SPIN_END_EVENT = "game:roulette:spin-end";
-  const GAME_ROULETTE_TIME_FOR_BETS_EVENT = "game:roulette:time-for-bets";
   const GAME_ROULETTE_SPIN_EVENT = "game:roulette:spin";
   const GAME_ROULETTE_WAITING_FOR_BETS_EVENT = "game:roulette:waiting-for-bets";
   const GAME_ROULETTE_WINNER_EVENT = "game:roulette:winner";
 
-  const [isSpinning, setIsSpinning] = useState(false);
   const [spinDegrees, setSpinDegrees] = useState(0);
+  const [gameState, setGameState] = useState<RouletteState>(
+    RouletteState.WAITING_FOR_BETS
+  );
+
+  const [executeLastingBetTimeTimer, setExecuteLastingBetTimeTimer] =
+    useState(false);
+  const [lastingBetTime, setLastingBetTime] = useState(0);
 
   const [sortedNumber, setSortedNumber] = useState<RouletteNumbers>({
     value: "00",
     color: "#355e3b",
   });
   const [lastSortedNumbers, setLastSortedNumbers] = useState<RouletteNumbers[]>(
-    [
-      {
-        value: "00",
-        color: "#355e3b",
-      },
-    ]
+    []
   );
 
   const [betAmount, setBetAmount] = useState("0");
   const [betOption, setBetOption] = useState<RouletteBetOptions>(
     RouletteBetOptions.GREEN
   );
+
+  const startBetTimeCounter = () => {
+    const interval = setInterval(() => {
+      console.log("Started timer");
+      console.log(lastingBetTime);
+      if (lastingBetTime === 0) {
+        console.log("Parar intervalo");
+        clearInterval(interval);
+        setExecuteLastingBetTimeTimer(false);
+        return;
+      }
+
+      setLastingBetTime((prev) => {
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
   useEffect(() => {
     if (socket) {
@@ -49,6 +65,7 @@ export default function Page() {
       socket.on(
         GAME_ROULETTE_SPIN_EVENT,
         ({ sortedNumber }: { sortedNumber: RouletteNumbers }) => {
+          console.log("Apostas encerradas, vamos girar");
           console.log("sortedNumber: " + sortedNumber);
 
           setSortedNumber(sortedNumber);
@@ -56,9 +73,20 @@ export default function Page() {
       );
 
       // Verificar eventos time_for_bets e waiting_for_bets
-      socket.on(GAME_ROULETTE_TIME_FOR_BETS_EVENT, () => {
-        console.log("Waiting for bets");
-      });
+      socket.on(
+        GAME_ROULETTE_WAITING_FOR_BETS_EVENT,
+        ({
+          betDurationTimeInMilliseconds,
+        }: {
+          betDurationTimeInMilliseconds: number;
+        }) => {
+          console.log(betDurationTimeInMilliseconds, "segundos para apostar");
+          setGameState(RouletteState.WAITING_FOR_BETS);
+          setLastingBetTime(betDurationTimeInMilliseconds / 1000);
+          setExecuteLastingBetTimeTimer(true);
+          console.log("Waiting for bets");
+        }
+      );
 
       socket.on(GAME_ROULETTE_WINNER_EVENT, ({ amount }) => {
         console.log("You win", amount);
@@ -72,7 +100,15 @@ export default function Page() {
     spinRoulette();
   }, [sortedNumber]);
 
+  useEffect(() => {
+    if (executeLastingBetTimeTimer) {
+      startBetTimeCounter();
+    }
+  }, [executeLastingBetTimeTimer]);
+
   const spinRoulette = () => {
+    setGameState(RouletteState.SPINNING);
+
     let currentNumberIndex = 0;
     let newNumberIndex = 0;
 
@@ -110,18 +146,14 @@ export default function Page() {
         rightSpinAngleDistance * ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE;
     }
 
-    setLastSortedNumbers((prev) => [...prev, sortedNumber]);
-    setIsSpinning(true);
     setSpinDegrees((prev) => prev + rouletteNumbersAngleDistance);
   };
 
   const bet = () => {
-    if (betAmount === "0") {
-      return;
-    }
+    if (gameState !== RouletteState.WAITING_FOR_BETS) return;
+    if (betAmount === "0") return;
 
     // Verificar se o usuário tem saldo suficiente
-
     socket?.emit(GAME_ROULETTE_BET_EVENT, {
       amount: Number(betAmount), // Verificar essa conversão
       betOption,
@@ -129,15 +161,17 @@ export default function Page() {
   };
 
   const onSpinRouletteComplete = () => {
-    setIsSpinning(false);
+    setGameState(RouletteState.RESOLVING_BETS);
+    setLastSortedNumbers((prev) => [...prev, sortedNumber]);
 
-    socket?.emit(GAME_ROULETTE_SPIN_END_EVENT);
+    // Buscar o novo saldo
   };
 
   return (
     <div
       id="roulette-container"
       className="
+        relative
         w-[98%] min-w-96 h-[440px] 
         flex flex-row items-center bg-[#252F38] rounded-md"
     >
@@ -156,7 +190,19 @@ export default function Page() {
           flex items-center justify-center
         "
           >
+            {gameState === RouletteState.WAITING_FOR_BETS && (
+              <span>{lastingBetTime}s</span>
+            )}
+
             <input
+              disabled={gameState !== RouletteState.WAITING_FOR_BETS}
+              style={{
+                opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+                cursor:
+                  gameState !== RouletteState.WAITING_FOR_BETS
+                    ? "not-allowed"
+                    : "pointer",
+              }}
               placeholder="Quantia"
               type="text"
               value={betAmount}
@@ -172,70 +218,103 @@ export default function Page() {
             id="roulette-bets-options-1"
             className="flex h-10 flex-row items-center justify-center mt-2 gap-2"
           >
-            <div
-              id="bet-option"
+            <button
+              disabled={gameState !== RouletteState.WAITING_FOR_BETS}
               className="flex-1 h-full bg-[#a31f1f] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
                   betOption === RouletteBetOptions.RED ? "white" : "#a31f1f",
+                opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+                cursor:
+                  gameState !== RouletteState.WAITING_FOR_BETS
+                    ? "not-allowed"
+                    : "pointer",
               }}
               onClick={() => setBetOption(RouletteBetOptions.RED)}
             >
               2x
-            </div>
-            <div
-              id="bet-option"
+            </button>
+            <button
+              disabled={gameState !== RouletteState.WAITING_FOR_BETS}
               className="flex-1 h-full bg-[#355e3b] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
                   betOption === RouletteBetOptions.GREEN ? "white" : "#355e3b",
+                opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+                cursor:
+                  gameState !== RouletteState.WAITING_FOR_BETS
+                    ? "not-allowed"
+                    : "pointer",
               }}
               onClick={() => setBetOption(RouletteBetOptions.GREEN)}
             >
               14x
-            </div>
-            <div
-              id="bet-option"
+            </button>
+            <button
+              disabled={gameState !== RouletteState.WAITING_FOR_BETS}
               className="flex-1 h-full bg-[#171212] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
                   betOption === RouletteBetOptions.BLACK ? "white" : "#171212",
+                opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+                cursor:
+                  gameState !== RouletteState.WAITING_FOR_BETS
+                    ? "not-allowed"
+                    : "pointer",
               }}
               onClick={() => setBetOption(RouletteBetOptions.BLACK)}
             >
               2x
-            </div>
+            </button>
           </div>
 
           <div
             id="roulette-bets-options-2"
             className="flex h-10 flex-row items-center justify-center mt-2 gap-2"
           >
-            <div
-              id="bet-option"
+            <button
+              disabled={gameState !== RouletteState.WAITING_FOR_BETS}
               className="flex-1 h-full bg-[#a31f1f] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
                   betOption === RouletteBetOptions.ODD ? "white" : "#a31f1f",
+                opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+                cursor:
+                  gameState !== RouletteState.WAITING_FOR_BETS
+                    ? "not-allowed"
+                    : "pointer",
               }}
               onClick={() => setBetOption(RouletteBetOptions.ODD)}
             >
               PAR
-            </div>
-            <div
-              id="bet-option"
+            </button>
+            <button
+              disabled={gameState !== RouletteState.WAITING_FOR_BETS}
               className="flex-1 h-full bg-[#171212] flex items-center justify-center rounded-md cursor-pointer border-2 text-xs"
               style={{
                 borderColor:
                   betOption === RouletteBetOptions.EVEN ? "white" : "#171212",
+                opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+                cursor:
+                  gameState !== RouletteState.WAITING_FOR_BETS
+                    ? "not-allowed"
+                    : "pointer",
               }}
               onClick={() => setBetOption(RouletteBetOptions.EVEN)}
             >
               ÍMPAR
-            </div>
+            </button>
           </div>
 
           <button
+            disabled={gameState !== RouletteState.WAITING_FOR_BETS}
+            style={{
+              opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+              cursor:
+                gameState !== RouletteState.WAITING_FOR_BETS
+                  ? "not-allowed"
+                  : "pointer",
+            }}
             onClick={bet}
             className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
           >
@@ -247,16 +326,19 @@ export default function Page() {
           id="roulette-numbers-historic"
           className="w-full h-20 max-h-20 min-h-20 "
         >
-          <h3 className=" text-sm">Últimos números</h3>
+          <h3 className=" text-sm">Últimos resultados</h3>
 
           <div
             id="numbers-historic-container"
-            className="mt-4 w-full h-8 flex flex-row items-center gap-2 overflow-x-auto overflow-y-hidden"
+            className="mt-4 w-full h-8 flex flex-row items-center gap-2 overflow-y-hidden overflow-x-hidden "
           >
-            {lastSortedNumbers.map((number, index) => (
+            {lastSortedNumbers.slice(-6).map((number, index) => (
               <div
                 key={index}
-                className="w-8 h-8 bg-[#a31f1f] flex items-center justify-center rounded-sm text-white"
+                className="w-8 h-8 min-w-8 min-h-8 flex items-center justify-center rounded-sm text-white"
+                style={{
+                  backgroundColor: number.color,
+                }}
               >
                 {number.value}
               </div>
@@ -274,6 +356,18 @@ export default function Page() {
           spinDegrees={spinDegrees}
         ></RouletteWheel>
       </div>
+
+      {gameState === RouletteState.RESOLVING_BETS && (
+        <div
+          id="resolving-bets-wrapper"
+          className="w-full h-full opacity-70 bg-black absolute top-0 left-0 flex justify-center items-center"
+        >
+          {/* Animação na opacidade ? */}
+          <span className="font-bold text-xl">
+            Aguardando início de novo Round...
+          </span>
+        </div>
+      )}
     </div>
   );
 }
