@@ -5,21 +5,33 @@ import { RouletteNumbers } from "./auxiliares/roulette-numbers";
 import { RouletteBetOptions } from "./auxiliares/routellet-bets-options";
 import { useSocket } from "@/app/contexts/socket-context";
 import { RouletteState } from "./auxiliares/roulette-state";
+import { useFirstRender } from "@/app/hooks/use-first-render-hook";
 
 export default function Page() {
   const { socket } = useSocket();
+  const isFirstRender = useFirstRender();
+
+  const initialRouletteNumberIndex = RouletteNumbers.findIndex(
+    (rouletteNumber) => rouletteNumber.value === "00"
+  );
 
   const DEFAULT_SPIN_ANGLE = 360 * 10; // Valor inicial do angulo de rotação da roleta (10 giros)
   const ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE = 360 / RouletteNumbers.length; // Angulo de cada número da roleta
 
+  // Emitted Socket Events
   const GAME_ROULETTE_START_EVENT = "game:roulette:start";
-  const GAME_ROULETTE_LEAVE_EVENT = "game:roulette:leave";
   const GAME_ROULETTE_BET_EVENT = "game:roulette:bet";
+
+  // Listened Socket Events
+  const GAME_ROULETTE_CURRENT_GAME_CONTEXT =
+    "game:roulette:current-game-context";
+  const GAME_ROULETTE_WINNER_EVENT = "game:roulette:winner";
   const GAME_ROULETTE_SPIN_EVENT = "game:roulette:spin";
   const GAME_ROULETTE_WAITING_FOR_BETS_EVENT = "game:roulette:waiting-for-bets";
-  const GAME_ROULETTE_WINNER_EVENT = "game:roulette:winner";
 
   const [spinDegrees, setSpinDegrees] = useState(0);
+  const [spinDuration, setSpinDuration] = useState(10);
+
   const [gameState, setGameState] = useState<RouletteState>(
     RouletteState.WAITING_FOR_BETS
   );
@@ -27,14 +39,15 @@ export default function Page() {
   const [executeLastingBetTimeTimer, setExecuteLastingBetTimeTimer] =
     useState(false);
   const [lastingBetTime, setLastingBetTime] = useState(0);
+  const [maxWaitingForBetsTime, setMaxWaitingForBetsTime] = useState(0);
 
-  const [sortedNumber, setSortedNumber] = useState<RouletteNumbers>({
-    value: "00",
-    color: "#355e3b",
-  });
+  const [sortedNumber, setSortedNumber] = useState<RouletteNumbers | null>(
+    null
+  );
   const [lastSortedNumbers, setLastSortedNumbers] = useState<RouletteNumbers[]>(
     []
   );
+  const [isFirstSpin, setIsFirstSpin] = useState(true);
 
   const [betAmount, setBetAmount] = useState("0");
   const [betOption, setBetOption] = useState<RouletteBetOptions>(
@@ -42,11 +55,10 @@ export default function Page() {
   );
 
   const startBetTimeCounter = () => {
+    let timerInClosure = lastingBetTime;
+
     const interval = setInterval(() => {
-      console.log("Started timer");
-      console.log(lastingBetTime);
-      if (lastingBetTime === 0) {
-        console.log("Parar intervalo");
+      if (timerInClosure === 0) {
         clearInterval(interval);
         setExecuteLastingBetTimeTimer(false);
         return;
@@ -55,6 +67,7 @@ export default function Page() {
       setLastingBetTime((prev) => {
         return prev - 1;
       });
+      timerInClosure--;
     }, 1000);
   };
 
@@ -63,16 +76,61 @@ export default function Page() {
       socket.emit(GAME_ROULETTE_START_EVENT);
 
       socket.on(
+        GAME_ROULETTE_CURRENT_GAME_CONTEXT,
+        (context: {
+          gameState: RouletteState;
+          waitingForBetsLastingTimeInMilliseconds: number;
+          maxWaitingForBetsTimeInMilliseconds: number;
+          currentSortedNumber: RouletteNumbers | null;
+          sortedNumbersHistoric: RouletteNumbers[];
+        }) => {
+          const {
+            gameState: currGameState,
+            waitingForBetsLastingTimeInMilliseconds,
+            maxWaitingForBetsTimeInMilliseconds,
+            currentSortedNumber,
+            sortedNumbersHistoric,
+          } = context;
+
+          setGameState(currGameState);
+
+          if (currGameState === RouletteState.WAITING_FOR_BETS) {
+            setLastingBetTime(
+              Math.trunc(waitingForBetsLastingTimeInMilliseconds / 1000)
+            );
+            setExecuteLastingBetTimeTimer(true);
+          }
+
+          setMaxWaitingForBetsTime(
+            Math.trunc(maxWaitingForBetsTimeInMilliseconds / 1000)
+          );
+
+          let verifiedLastSortedNumbers: RouletteNumbers[] = [];
+          if (currGameState === RouletteState.RESOLVING_BETS) {
+            verifiedLastSortedNumbers = [
+              ...sortedNumbersHistoric,
+              currentSortedNumber!,
+            ];
+          } else {
+            verifiedLastSortedNumbers = sortedNumbersHistoric;
+          }
+
+          setLastSortedNumbers(verifiedLastSortedNumbers);
+          setIsFirstSpin(true);
+          setSortedNumber(
+            verifiedLastSortedNumbers.at(-1) ??
+              RouletteNumbers[initialRouletteNumberIndex]
+          );
+        }
+      );
+
+      socket.on(
         GAME_ROULETTE_SPIN_EVENT,
         ({ sortedNumber }: { sortedNumber: RouletteNumbers }) => {
-          console.log("Apostas encerradas, vamos girar");
-          console.log("sortedNumber: " + sortedNumber);
-
           setSortedNumber(sortedNumber);
         }
       );
 
-      // Verificar eventos time_for_bets e waiting_for_bets
       socket.on(
         GAME_ROULETTE_WAITING_FOR_BETS_EVENT,
         ({
@@ -80,31 +138,55 @@ export default function Page() {
         }: {
           betDurationTimeInMilliseconds: number;
         }) => {
-          console.log(betDurationTimeInMilliseconds, "segundos para apostar");
           setGameState(RouletteState.WAITING_FOR_BETS);
           setLastingBetTime(betDurationTimeInMilliseconds / 1000);
           setExecuteLastingBetTimeTimer(true);
-          console.log("Waiting for bets");
         }
       );
 
-      socket.on(GAME_ROULETTE_WINNER_EVENT, ({ amount }) => {
-        console.log("You win", amount);
-      });
+      // socket.on(GAME_ROULETTE_WINNER_EVENT, ({ amount }) => {
+      //   console.log("You win", amount);
+      // });
     }
   }, [socket]);
 
   useEffect(() => {
-    if (sortedNumber.value === "00") return;
+    if (isFirstRender) return;
+    if (!sortedNumber) return;
 
-    spinRoulette();
+    if (isFirstSpin) initialRouletteSpin();
+    else spinRoulette();
   }, [sortedNumber]);
 
   useEffect(() => {
+    if (isFirstRender) return;
+
     if (executeLastingBetTimeTimer) {
       startBetTimeCounter();
     }
   }, [executeLastingBetTimeTimer]);
+
+  const initialRouletteSpin = () => {
+    const currentNumberIndex = initialRouletteNumberIndex;
+    const newNumberIndex = RouletteNumbers.findIndex(
+      (rouletteNumber) => rouletteNumber.value === sortedNumber?.value
+    );
+
+    if (currentNumberIndex === newNumberIndex) {
+      setIsFirstSpin(false);
+      return;
+    }
+
+    const spinAngleDistance = calculateSpinDegreesClockwise(
+      currentNumberIndex,
+      newNumberIndex
+    );
+
+    setSpinDuration(1);
+    setSpinDegrees(
+      (prev) => prev + spinAngleDistance * ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE
+    );
+  };
 
   const spinRoulette = () => {
     setGameState(RouletteState.SPINNING);
@@ -113,10 +195,17 @@ export default function Page() {
     let newNumberIndex = 0;
 
     RouletteNumbers.forEach((rouletteNumber, index) => {
-      if (rouletteNumber.value === lastSortedNumbers.at(-1)?.value) {
+      if (
+        rouletteNumber.value ===
+        (lastSortedNumbers.at(-1)?.value ??
+          RouletteNumbers[initialRouletteNumberIndex].value)
+      ) {
         currentNumberIndex = index;
       }
-      if (rouletteNumber.value === sortedNumber.value) {
+      if (
+        rouletteNumber.value === sortedNumber?.value ??
+        RouletteNumbers[initialRouletteNumberIndex].value
+      ) {
         newNumberIndex = index;
       }
     });
@@ -126,27 +215,46 @@ export default function Page() {
     if (spinDegrees > 360) {
       // Deve girar sentido anti-horário (Como o valor do angulo de rotação soma a cada giro da roleta,
       // para não chegar num limite de valor do JS decidi por fazer a rotação no sentido anti-horário quando o valor do angulo de rotação for maior que 360 graus)
-      const leftSpinAngleDistance =
-        newNumberIndex > currentNumberIndex
-          ? newNumberIndex - currentNumberIndex
-          : RouletteNumbers.length - (currentNumberIndex - newNumberIndex);
+      const leftSpinAngleDistance = calculateSpinDegreesAntiClockwise(
+        currentNumberIndex,
+        newNumberIndex
+      );
 
       rouletteNumbersAngleDistance =
         DEFAULT_SPIN_ANGLE * -1 -
         leftSpinAngleDistance * ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE;
     } else {
       // Deve girar sentido horário
-      const rightSpinAngleDistance =
-        newNumberIndex > currentNumberIndex
-          ? RouletteNumbers.length - (newNumberIndex - currentNumberIndex)
-          : currentNumberIndex - newNumberIndex;
+      const rightSpinAngleDistance = calculateSpinDegreesClockwise(
+        currentNumberIndex,
+        newNumberIndex
+      );
 
       rouletteNumbersAngleDistance =
         DEFAULT_SPIN_ANGLE +
         rightSpinAngleDistance * ROULETTE_NUMBERS_CIRCUNFERENCE_ANGLE;
     }
 
+    setSpinDuration(10);
     setSpinDegrees((prev) => prev + rouletteNumbersAngleDistance);
+  };
+
+  const calculateSpinDegreesAntiClockwise = (
+    currentNumberIndex: number,
+    newNumberIndex: number
+  ) => {
+    return newNumberIndex > currentNumberIndex
+      ? newNumberIndex - currentNumberIndex
+      : RouletteNumbers.length - (currentNumberIndex - newNumberIndex);
+  };
+
+  const calculateSpinDegreesClockwise = (
+    currentNumberIndex: number,
+    newNumberIndex: number
+  ) => {
+    return newNumberIndex > currentNumberIndex
+      ? RouletteNumbers.length - (newNumberIndex - currentNumberIndex)
+      : currentNumberIndex - newNumberIndex;
   };
 
   const bet = () => {
@@ -161,8 +269,15 @@ export default function Page() {
   };
 
   const onSpinRouletteComplete = () => {
-    setGameState(RouletteState.RESOLVING_BETS);
+    if (!sortedNumber) return;
+
+    if (isFirstSpin) {
+      setIsFirstSpin(false);
+      return;
+    }
+
     setLastSortedNumbers((prev) => [...prev, sortedNumber]);
+    setGameState(RouletteState.RESOLVING_BETS);
 
     // Buscar o novo saldo
   };
@@ -184,16 +299,37 @@ export default function Page() {
       >
         <div id="roulette-bets-container">
           <div
+            id="timer-container"
+            className="w-full h-5 bg-[#0F1923] rounded-md p-1 flex items-center  relative"
+            style={{
+              opacity: gameState !== RouletteState.WAITING_FOR_BETS ? 0.5 : 1,
+            }}
+          >
+            <div
+              id="timer-counter"
+              className="h-3 bg-red-500 rounded-sm absolute z-10"
+              style={{
+                width: `${(lastingBetTime / maxWaitingForBetsTime) * 96}%`,
+              }}
+            ></div>
+
+            <span className="w-full text-xs text-center z-20">
+              {gameState === RouletteState.SPINNING
+                ? "Girando"
+                : gameState === RouletteState.WAITING_FOR_BETS
+                ? `Girando em ${lastingBetTime}s`
+                : "Aguradando novo round"}
+            </span>
+          </div>
+
+          <div
             id="roulette-bets-input-box"
             className="
           w-full h-10 relative
           flex items-center justify-center
+          mt-4
         "
           >
-            {gameState === RouletteState.WAITING_FOR_BETS && (
-              <span>{lastingBetTime}s</span>
-            )}
-
             <input
               disabled={gameState !== RouletteState.WAITING_FOR_BETS}
               style={{
@@ -354,6 +490,7 @@ export default function Page() {
         <RouletteWheel
           onAnimationComplete={onSpinRouletteComplete}
           spinDegrees={spinDegrees}
+          spinDuration={spinDuration}
         ></RouletteWheel>
       </div>
 

@@ -6,11 +6,13 @@ import { RouletteNumbers } from "../auxiliares/roulette-numbers";
 
 type RouletteWheelProps = {
   spinDegrees: number;
+  spinDuration: number;
   onAnimationComplete: () => void;
 };
 
 export default function RouletteWheel({
   spinDegrees,
+  spinDuration,
   onAnimationComplete,
 }: RouletteWheelProps) {
   const rouletteNumbersCircunferenceAngle =
@@ -21,7 +23,7 @@ export default function RouletteWheel({
       <motion.div
         className="w-full h-full border-4 border-white rounded-full relative"
         animate={{ rotate: spinDegrees }}
-        transition={{ duration: 10, ease: [0.5, 0.1, 0.1, 1] }}
+        transition={{ duration: spinDuration, ease: [0.5, 0.1, 0.1, 1] }}
         onAnimationComplete={onAnimationComplete}
       >
         {RouletteNumbers.map((rouletteNumber, index) => {
@@ -31,9 +33,9 @@ export default function RouletteWheel({
             <div
               key={rouletteNumber.value}
               className={`
-          w-6 h-1/2 absolute top-0 left-1/2 
-          transform origin-bottom
-          flex alice-center justify-center
+            w-6 h-1/2 absolute top-0 left-1/2 
+            transform origin-bottom
+            flex alice-center justify-center
           bg-white
           `}
               style={{
