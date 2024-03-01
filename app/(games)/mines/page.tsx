@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSocket } from "@/app/contexts/socket-context";
 import { useFirstRender } from "@/app/hooks/use-first-render-hook";
 import { DeepCopy } from "@/app/auxiliares/deep-copy";
@@ -7,7 +7,12 @@ import { DeepCopy } from "@/app/auxiliares/deep-copy";
 enum MinesBoardBlockState {
   EMPTY = 0,
   BOMB = 1,
-  FLAG = 2,
+  DIAMOND = 2,
+}
+
+export enum MinesState {
+  WAITING_START,
+  ACTIVE,
 }
 
 export default function Page() {
@@ -16,32 +21,18 @@ export default function Page() {
 
   // Emitted Socket Events
   const GAME_MINES_START_EVENT = "game:mines:start";
-  const GAME_MINES_BET_EVENT = "game:mines:bet";
+  const GAME_MINES_SELECT_BLOCK_EVENT = "game:mines:select-block";
+  const GAME_MINES_FINALIZE_GAME_EVENT = "game:mines:finalize-game";
 
   // Listened Socket Events
-  const GAME_MINES_CURRENT_GAME_CONTEXT = "game:mines:current-game-context";
-  const GAME_MINES_WAITING_FOR_BETS_EVENT = "game:mines:waiting-for-bets";
+  const GAME_MINES_SELECT_BLOCK_SUCCESS = "game:mines:select-block-success";
+  const GAME_MINES_SELECT_BLOCK_FAILURE = "game:mines:select-block-failure";
 
-  //   const [gameState, setGameState] = useState<minesState>(
-  //     minesState.WAITING_FOR_BETS
-  //   );
-
-  const [executeLastingBetTimeTimer, setExecuteLastingBetTimeTimer] =
-    useState(false);
-  const [lastingBetTime, setLastingBetTime] = useState(0);
-  const [maxWaitingForBetsTime, setMaxWaitingForBetsTime] = useState(0);
-
+  const [gameState, setGameState] = useState<MinesState>(
+    MinesState.WAITING_START
+  );
   const [betAmount, setBetAmount] = useState("0");
-  const [minesQuantity, setMinesQuantity] = useState(2);
-
-  const REAL_BOARD = [
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 0],
-    [0, 0, 0, 0, 1],
-    [0, 0, 0, 1, 0],
-    [0, 0, 1, 0, 0],
-  ];
-
+  const [bombsQuantity, setBombsQuantity] = useState(3);
   const [minesBoard, setMinesBoard] = useState<MinesBoardBlockState[][]>([
     [
       MinesBoardBlockState.EMPTY,
@@ -80,29 +71,74 @@ export default function Page() {
     ],
   ]);
 
+  const [currentAmountMultiplier, setCurrentAmountMultiplier] = useState(1);
+  const [nextAmountMultiplier, setNextAmountMultiplier] = useState(1);
+  const [lastingDiamonds, setLastDiamonds] = useState(0);
+
   useEffect(() => {
     if (socket) {
-      socket.emit(GAME_MINES_START_EVENT);
+      socket.on(
+        GAME_MINES_SELECT_BLOCK_SUCCESS,
+        ({
+          rowIndex,
+          colIndex,
+          newMultiplier,
+        }: {
+          rowIndex: number;
+          colIndex: number;
+          newMultiplier: number;
+        }) => {
+          setMinesBoard((prevBoard) => {
+            const currBoard = DeepCopy(prevBoard);
+            currBoard[rowIndex][colIndex] = MinesBoardBlockState.DIAMOND;
+            return currBoard;
+          });
 
-      socket.on(GAME_MINES_CURRENT_GAME_CONTEXT, (context: {}) => {});
+          setCurrentAmountMultiplier(newMultiplier);
+        }
+      );
 
-      socket.on(GAME_MINES_WAITING_FOR_BETS_EVENT, ({}: {}) => {});
+      socket.on(
+        GAME_MINES_SELECT_BLOCK_FAILURE,
+        ({ rowIndex, colIndex }: { rowIndex: number; colIndex: number }) => {
+          setMinesBoard((prevBoard) => {
+            const currBoard = DeepCopy(prevBoard);
+            currBoard[rowIndex][colIndex] = MinesBoardBlockState.BOMB;
+            return currBoard;
+          });
+
+          setGameState(MinesState.WAITING_START);
+        }
+      );
     }
   }, [socket]);
 
+  const startGame = () => {
+    if (!betAmount) return;
+    if (!bombsQuantity) return;
+
+    console.log("Start game");
+
+    socket?.emit(GAME_MINES_START_EVENT, {
+      bombsQuantity,
+      betAmount,
+    });
+
+    // Ativar após evento de confirmação (?)
+    setGameState(MinesState.ACTIVE);
+  };
+
   const selectBlock = (row: number, column: number) => {
-    // Enviar para o backend
-    const currBoard = DeepCopy(minesBoard);
+    socket?.emit(GAME_MINES_SELECT_BLOCK_EVENT, {
+      rowIndex: row,
+      colIndex: column,
+    });
+  };
 
-    if (REAL_BOARD[row][column] === 1) {
-      currBoard[row][column] = MinesBoardBlockState.FLAG;
-      // Continua
-    } else {
-      currBoard[row][column] = MinesBoardBlockState.BOMB;
-      // Perdeu
-    }
+  const finalizeGame = () => {
+    socket?.emit(GAME_MINES_FINALIZE_GAME_EVENT);
 
-    setMinesBoard(currBoard);
+    setGameState(MinesState.WAITING_START);
   };
 
   const buildBlock = (state: MinesBoardBlockState) => {
@@ -111,8 +147,8 @@ export default function Page() {
         return "";
       case MinesBoardBlockState.BOMB:
         return "💣";
-      case MinesBoardBlockState.FLAG:
-        return "🚩";
+      case MinesBoardBlockState.DIAMOND:
+        return "💎";
     }
   };
 
@@ -151,9 +187,9 @@ export default function Page() {
 
         <h3 className="text-sm mt-2">Número de Minas</h3>
         <select
-          value={minesQuantity}
+          value={bombsQuantity}
           className="mt-1 w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white outline-none text-xs"
-          onChange={(e) => setMinesQuantity(Number(e.target.value))}
+          onChange={(e) => setBombsQuantity(Number(e.target.value))}
         >
           {[...Array(23)].map((_, index) => {
             return (
@@ -164,8 +200,10 @@ export default function Page() {
           })}
         </select>
 
+        <span>Multiplicador {currentAmountMultiplier.toFixed(2)}x</span>
+
         <button
-          onClick={() => {}}
+          onClick={startGame}
           className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
         >
           Apostar
@@ -190,7 +228,13 @@ export default function Page() {
                         text-[#626B78]
                         cursor-pointer
                         "
-                    onClick={() => selectBlock(rowIndex, cellIndex)}
+                    onClick={
+                      cell === MinesBoardBlockState.EMPTY &&
+                      gameState === MinesState.ACTIVE
+                        ? () => selectBlock(rowIndex, cellIndex)
+                        : () => null
+                    }
+                    style={{}}
                   >
                     {buildBlock(cell)}
                   </div>
