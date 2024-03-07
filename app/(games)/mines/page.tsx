@@ -3,17 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useSocket } from "@/app/contexts/socket-context";
 import { useFirstRender } from "@/app/hooks/use-first-render-hook";
 import { DeepCopy } from "@/app/auxiliares/deep-copy";
-
-enum MinesBoardBlockState {
-  EMPTY = 0,
-  BOMB = 1,
-  DIAMOND = 2,
-}
-
-export enum MinesState {
-  WAITING_START,
-  ACTIVE,
-}
+import { MinesState } from "./auxiliares/mines-state";
+import { MinesBoardBlockState } from "./auxiliares/mines-board-block-state";
+import { INITIAL_MINES_BOARD } from "./auxiliares/initial-mines-board";
 
 export default function Page() {
   const { socket } = useSocket();
@@ -25,6 +17,7 @@ export default function Page() {
   const GAME_MINES_FINALIZE_GAME_EVENT = "game:mines:finalize-game";
 
   // Listened Socket Events
+  const GAME_MINES_GAME_STARTED = "game:mines:game-started";
   const GAME_MINES_SELECT_BLOCK_SUCCESS = "game:mines:select-block-success";
   const GAME_MINES_SELECT_BLOCK_FAILURE = "game:mines:select-block-failure";
 
@@ -33,60 +26,57 @@ export default function Page() {
   );
   const [betAmount, setBetAmount] = useState("0");
   const [bombsQuantity, setBombsQuantity] = useState(3);
-  const [minesBoard, setMinesBoard] = useState<MinesBoardBlockState[][]>([
-    [
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-    ],
-    [
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-    ],
-    [
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-    ],
-    [
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-    ],
-    [
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-      MinesBoardBlockState.EMPTY,
-    ],
-  ]);
+  const [minesBoard, setMinesBoard] = useState<MinesBoardBlockState[][]>(
+    DeepCopy(INITIAL_MINES_BOARD)
+  );
 
   const [currentAmountMultiplier, setCurrentAmountMultiplier] = useState(1);
-  const [nextAmountMultiplier, setNextAmountMultiplier] = useState(1);
+  const [nextAmountMultiplier, setNextAmountMultiplier] = useState<
+    number | null
+  >(1);
   const [lastingDiamonds, setLastDiamonds] = useState(0);
+  const [tempWinAmount, setTempWinAmount] = useState(0);
 
   useEffect(() => {
     if (socket) {
+      socket.on(
+        GAME_MINES_GAME_STARTED,
+        ({
+          newCurrentMultiplier,
+          newNextMultiplier,
+          lastingDiamonds,
+          tempWinAmount,
+        }: {
+          newCurrentMultiplier: number;
+          newNextMultiplier: number | null;
+          lastingDiamonds: number;
+          tempWinAmount: number;
+        }) => {
+          setGameState(MinesState.ACTIVE);
+
+          setCurrentAmountMultiplier(newCurrentMultiplier);
+          setNextAmountMultiplier(newNextMultiplier);
+          setLastDiamonds(lastingDiamonds);
+          setTempWinAmount(tempWinAmount);
+        }
+      );
+
       socket.on(
         GAME_MINES_SELECT_BLOCK_SUCCESS,
         ({
           rowIndex,
           colIndex,
-          newMultiplier,
+          newCurrentMultiplier,
+          newNextMultiplier,
+          lastingDiamonds,
+          tempWinAmount,
         }: {
           rowIndex: number;
           colIndex: number;
-          newMultiplier: number;
+          newCurrentMultiplier: number;
+          newNextMultiplier: number | null;
+          lastingDiamonds: number;
+          tempWinAmount: number;
         }) => {
           setMinesBoard((prevBoard) => {
             const currBoard = DeepCopy(prevBoard);
@@ -94,7 +84,10 @@ export default function Page() {
             return currBoard;
           });
 
-          setCurrentAmountMultiplier(newMultiplier);
+          setCurrentAmountMultiplier(newCurrentMultiplier);
+          setNextAmountMultiplier(newNextMultiplier);
+          setLastDiamonds(lastingDiamonds);
+          setTempWinAmount(tempWinAmount);
         }
       );
 
@@ -118,14 +111,12 @@ export default function Page() {
     if (!bombsQuantity) return;
 
     console.log("Start game");
+    setMinesBoard(DeepCopy(INITIAL_MINES_BOARD));
 
     socket?.emit(GAME_MINES_START_EVENT, {
       bombsQuantity,
       betAmount,
     });
-
-    // Ativar após evento de confirmação (?)
-    setGameState(MinesState.ACTIVE);
   };
 
   const selectBlock = (row: number, column: number) => {
@@ -139,6 +130,7 @@ export default function Page() {
     socket?.emit(GAME_MINES_FINALIZE_GAME_EVENT);
 
     setGameState(MinesState.WAITING_START);
+    setMinesBoard(DeepCopy(INITIAL_MINES_BOARD));
   };
 
   const buildBlock = (state: MinesBoardBlockState) => {
@@ -185,29 +177,89 @@ export default function Page() {
           <span className="absolute right-2 text-xs">R$</span>
         </div>
 
-        <h3 className="text-sm mt-2">Número de Minas</h3>
-        <select
-          value={bombsQuantity}
-          className="mt-1 w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white outline-none text-xs"
-          onChange={(e) => setBombsQuantity(Number(e.target.value))}
-        >
-          {[...Array(23)].map((_, index) => {
-            return (
-              <option key={index} value={index + 2}>
-                {index + 2}
-              </option>
-            );
-          })}
-        </select>
+        {gameState === MinesState.WAITING_START ? (
+          <>
+            <h3 className="text-sm mt-2">Número de Minas</h3>
+            <select
+              value={bombsQuantity}
+              className="mt-1 w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white outline-none text-xs"
+              onChange={(e) => setBombsQuantity(Number(e.target.value))}
+            >
+              {[...Array(23)].map((_, index) => {
+                return (
+                  <option key={index} value={index + 2}>
+                    {index + 2}
+                  </option>
+                );
+              })}
+            </select>
 
-        <span>Multiplicador {currentAmountMultiplier.toFixed(2)}x</span>
+            <button
+              onClick={startGame}
+              className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
+            >
+              Apostar
+            </button>
+          </>
+        ) : (
+          <>
+            <div
+              className="
+                w-full
+                flex flex-col items-centers
+              "
+            >
+              <h3 className="text-sm mt-2">Multiplicador Atual</h3>
+              <div className="w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white text-xs flex items-center">
+                <span>{currentAmountMultiplier.toFixed(2)} x</span>
+              </div>
+            </div>
 
-        <button
-          onClick={startGame}
-          className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
-        >
-          Apostar
-        </button>
+            <div
+              className="
+                w-full
+                flex flex-col items-centers
+              "
+            >
+              <h3 className="text-sm mt-2">Próximo Multiplicador</h3>
+              <div className="w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white text-xs flex items-center">
+                <span>{nextAmountMultiplier?.toFixed(2) || "∞"} x</span>
+              </div>
+            </div>
+
+            <div className="w-full flex flex-row justify-between items-center gap-2">
+              <div
+                className="
+                w-full
+                flex flex-col items-centers
+              "
+              >
+                <h3 className="text-sm mt-2">Minas</h3>
+                <div className="w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white text-xs flex items-center">
+                  {bombsQuantity}
+                </div>
+              </div>
+              <div
+                className="
+                w-full
+                flex flex-col items-centers
+              "
+              >
+                <h3 className="text-sm mt-2">Diamantes</h3>
+                <div className="w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white text-xs flex items-center">
+                  {lastingDiamonds}
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={finalizeGame}
+              className="mt-6 bg-[#a31f1f] w-full h-10 font-bold text-xs hover:bg-red-600 rounded-md transition duration-500 ease-out"
+            >
+              Retirar R$ {tempWinAmount.toFixed(2)}
+            </button>
+          </>
+        )}
       </div>
 
       <div
