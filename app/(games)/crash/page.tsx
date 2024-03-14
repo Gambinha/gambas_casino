@@ -18,8 +18,8 @@ export default function Page() {
   // Listened Socket Events
   const GAME_CRASH_CURRENT_GAME_CONTEXT = "game:crash:current-game-context";
   const GAME_CRASH_WAITING_FOR_BETS_EVENT = "game:crash:waiting-for-bets";
-  const GAME_CRASH_POINTS_HISTORIC_EVENT = "game:crash:points-historic";
-  const GAME_CRASH_POINT_EVENT = "game:crash:point";
+  const GAME_CRASH_START_MULTIPLIER_EVENT = "game:crash:start-multiplier";
+  const GAME_CRASH_STOP_MULTIPLIER_EVENT = "game:crash:stop-multiplier";
 
   const [gameState, setGameState] = useState<CrashState>(
     CrashState.WAITING_FOR_BETS
@@ -32,13 +32,14 @@ export default function Page() {
 
   const [currentCrashPointStartDate, setCurrentCrashPointStartDate] =
     useState<Date>(new Date());
-  const [currentCrashPoint, setCurrentCrashPoint] =
-    useState(INITIAL_CRASH_POINT);
-  const [crashPoint, setCrashPoint] = useState<number>(0);
+  const [currentCrashPoint, setCurrentCrashPoint] = useState<number | null>(
+    null
+  );
+
   const [lastCrashPoints, setLastCrashPoints] = useState<number[]>([]);
 
   const [betAmount, setBetAmount] = useState("0");
-  const [betPreCrashStopPoint, setBetPreCrashStopPoint] = useState(0);
+  const [betPreCrashStopPoint, setBetPreCrashStopPoint] = useState("0");
 
   const intervalId = useRef<NodeJS.Timeout | null>(null);
 
@@ -62,7 +63,6 @@ export default function Page() {
           waitingForBetsLastingTimeInMilliseconds: number;
           maxWaitingForBetsTimeInMilliseconds: number;
           crashPointsHistoric: number[];
-          currentCrashPoint: number | null;
           currentCrashPointRunStartDate: Date | null;
         }) => {
           const {
@@ -70,11 +70,10 @@ export default function Page() {
             waitingForBetsLastingTimeInMilliseconds,
             maxWaitingForBetsTimeInMilliseconds,
             crashPointsHistoric,
-            currentCrashPoint,
             currentCrashPointRunStartDate,
           } = context;
 
-          setGameState(currGameState);
+          console.log(context);
 
           if (currGameState === CrashState.WAITING_FOR_BETS) {
             setLastingBetTime(
@@ -87,9 +86,9 @@ export default function Page() {
             setCurrentCrashPointStartDate(
               new Date(currentCrashPointRunStartDate!)
             );
-            setCrashPoint(currentCrashPoint!);
           }
 
+          setGameState(currGameState);
           setMaxWaitingForBetsTime(
             Math.trunc(maxWaitingForBetsTimeInMilliseconds / 1000)
           );
@@ -97,11 +96,22 @@ export default function Page() {
         }
       );
 
+      socket.on(GAME_CRASH_START_MULTIPLIER_EVENT, () => {
+        console.log("GAME_CRASH_START_MULTIPLIER_EVENT");
+        setGameState(CrashState.RUNNING);
+        setCurrentCrashPointStartDate(new Date());
+      });
+
       socket.on(
-        GAME_CRASH_POINT_EVENT,
+        GAME_CRASH_STOP_MULTIPLIER_EVENT,
         ({ crashPoint }: { crashPoint: number }) => {
-          setCrashPoint(crashPoint);
-          setCurrentCrashPointStartDate(new Date());
+          // Parar a contagem
+          console.log("GAME_CRASH_STOP_MULTIPLIER_EVENT", crashPoint);
+          setGameState(CrashState.WAITING_NEW_ROUND);
+          setLastCrashPoints((prev) => {
+            return [...prev, crashPoint];
+          });
+          setCurrentCrashPoint(crashPoint);
         }
       );
 
@@ -113,15 +123,9 @@ export default function Page() {
           betDurationTimeInMilliseconds: number;
         }) => {
           setGameState(CrashState.WAITING_FOR_BETS);
+          setCurrentCrashPoint(null);
           setLastingBetTime(betDurationTimeInMilliseconds / 1000);
           setExecuteLastingBetTimeTimer(true);
-        }
-      );
-
-      socket.on(
-        GAME_CRASH_POINTS_HISTORIC_EVENT,
-        ({ crashPointsHistoric }: { crashPointsHistoric: number[] }) => {
-          setLastCrashPoints(crashPointsHistoric);
         }
       );
     }
@@ -147,15 +151,18 @@ export default function Page() {
 
   useEffect(() => {
     if (isFirstRender) return;
-    if (!crashPoint) return;
 
-    setCurrentCrashPoint(INITIAL_CRASH_POINT);
-  }, [crashPoint, isFirstRender]);
+    console.log(gameState);
+    if (gameState === CrashState.RUNNING) {
+      // Reiniciar o contador
+      setCurrentCrashPoint(INITIAL_CRASH_POINT);
+    }
+  }, [gameState, isFirstRender]);
 
   useEffect(() => {
     if (isFirstRender) return;
 
-    if (currentCrashPoint <= crashPoint) {
+    if (gameState === CrashState.RUNNING) {
       let newCurrentCrashPoint = currentCrashPoint;
       do {
         const elapsedTimeInSeconds =
@@ -165,12 +172,8 @@ export default function Page() {
       } while (newCurrentCrashPoint == currentCrashPoint);
 
       setCurrentCrashPoint(newCurrentCrashPoint);
-    } else {
-      setLastCrashPoints((prev) => {
-        return [...prev, currentCrashPoint];
-      });
     }
-  }, [currentCrashPoint, currentCrashPointStartDate, isFirstRender]);
+  }, [currentCrashPoint, isFirstRender]);
 
   const bet = () => {
     if (gameState !== CrashState.WAITING_FOR_BETS) return;
@@ -178,8 +181,8 @@ export default function Page() {
 
     // Verificar se o usuário tem saldo suficiente
     socket?.emit(GAME_CRASH_BET_EVENT, {
-      amount: Number(betAmount), // Verificar essa conversão
-      preCrashStopPoint: betPreCrashStopPoint,
+      betAmount: Number(betAmount), // Verificar essa conversão
+      preCrashStopPoint: Number(betPreCrashStopPoint),
     });
   };
 
@@ -219,7 +222,7 @@ export default function Page() {
                 ? "Rodando"
                 : gameState === CrashState.WAITING_FOR_BETS
                 ? `Girando em ${lastingBetTime}s`
-                : "Aguradando novo round"}
+                : "Aguardando novo round"}
             </span>
           </div>
 
@@ -260,10 +263,10 @@ export default function Page() {
                   : "pointer",
             }}
             placeholder="Quantia"
-            type="number"
+            type="text"
             value={betPreCrashStopPoint}
             className=" w-full h-10 bg-[#0F1923] rounded-md pl-2 text-white outline-none text-xs"
-            onChange={(e) => setBetPreCrashStopPoint(Number(e.target.value))}
+            onChange={(e) => setBetPreCrashStopPoint(e.target.value)}
           />
 
           <button
@@ -312,19 +315,12 @@ export default function Page() {
         id="roulette-wheel-container"
         className="flex-auto border-l-2 border-[#626B78] flex flex-co h-full items-center justify-center"
       >
-        <span>{currentCrashPoint.toFixed(2)}</span>
+        <span>
+          {gameState === CrashState.WAITING_FOR_BETS
+            ? "Aguardando início da rodada"
+            : currentCrashPoint?.toFixed(2)}
+        </span>
       </div>
-
-      {/* {gameState === CrashState.RESOLVING_BETS && (
-        <div
-          id="resolving-bets-wrapper"
-          className="w-full h-full opacity-70 bg-black absolute top-0 left-0 flex justify-center items-center"
-        >
-          <span className="font-bold text-xl">
-            Aguardando início de novo Round...
-          </span>
-        </div>
-      )} */}
     </div>
   );
 }
